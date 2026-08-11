@@ -23,6 +23,19 @@ export const botManager = {
       _running = true;
       dbOps.setBotRunning(true);
       logger.info("Telegram bot started via BotManager");
+      // Liveness guard: if polling silently dies (Node 24 fetch conflict),
+      // detect it after 30s and restart.
+      setTimeout(async () => {
+        try {
+          const info = await bot.telegram.getMe();
+          logger.info({ bot: info.username }, "Bot polling alive check");
+        } catch (err) {
+          logger.warn({ err }, "Polling appears dead, restarting");
+          _running = false;
+          dbOps.setBotRunning(false);
+          await botManager.start();
+        }
+      }, 30_000);
     } catch (err) {
       logger.error({ err }, "Failed to start bot");
       throw err;

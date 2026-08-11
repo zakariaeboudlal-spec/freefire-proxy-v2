@@ -34,16 +34,14 @@ function durationLabel(d: number) {
 
 function proxyText(keyType: string): string {
   const cfg = dbOps.getProxySettings();
-  // One public endpoint relays every feature port via the proxy server.
-  const ep = `\`${cfg.ip}:${cfg.port}\` (` + cfg.ports.aim_drag + "–" + cfg.ports.speed_pro + ")";
-  let t = `🌐 *Server:* ${ep}\n\n🔌 *Choose your feature:*\n`;
-  t += `  🎯 *Aim Drag*   →  ${ep}\n`;
-  t += `  💥 *Aim Body*   →  ${ep}\n`;
-  t += `  🔫 *Aim Neck*   →  ${ep}\n`;
-  t += `  ⚡ *Speed* _[FF Max]_ →  ${ep}\n`;
-  t += `  🎮 *3D Mode* _[FF Max]_ →  ${ep}\n`;
+  // One port carries the whole modded OBB (Head + Body hits).
+  const ep = `\`${cfg.ip}:${cfg.port}\``;
+  let t = `🌐 *Server:* ${ep}   🔌 *Port:* ${ep.replace("`", "")}\n\n`;
+  t += `🎯 *FF OBB Mod — Head + Body Hits*\n`;
+  t += `📦 Your game downloads the small OBB file automatically through the proxy when you enter a match.\n`;
+  t += `⚠️ One server & one port for everything — no extra steps.\n`;
   if (keyType === "pro") {
-    t += `\n  ☣️ *Speed x1.5* _(Risk BlackList)_\n     →  ${ep}\n`;
+    t += `\n⭐ *Pro* — full headshot/bodyshot injection.\n`;
   }
   return t;
 }
@@ -452,10 +450,7 @@ bot.action(/^stars_(\w+)_(\d+)$/, async (ctx) => {
   await ctx.replyWithInvoice({
     title: `🔑 FF Proxy Key — ${title}`,
     description:
-      `${typeLabel(type)} proxy key for ${durationLabel(days)}.\n` +
-      (type === "pro"
-        ? "Includes 3D Mode, Speed, and exclusive x1.5 Speed port."
-        : "Includes Aim Drag, Body, Neck ports."),
+      `${typeLabel(type)} proxy key for ${durationLabel(days)}.\nOne port, full FF OBB mod with Head + Body hits.`,
     payload: `star_${type}_${days}`,
     provider_token: "",
     currency: "XTR",

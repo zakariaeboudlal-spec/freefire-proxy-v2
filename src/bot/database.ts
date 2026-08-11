@@ -75,24 +75,20 @@ export interface BotUser {
   last_seen: string;
 }
 
+// Single-feature OBB build: one port relays the whole modded OBB
+// (small payload downloaded over the proxy at game start) with
+// Head/Body auto-hit injection. No separate feature ports anymore.
 export interface ProxySettings {
   ip: string;
   port: number;
-  ports: {
-    aim_drag: number;
-    aim_body: number;
-    aim_neck: number;
-    speed: number;
-    mode_3d: number;
-    speed_pro: number;
-  };
+  feature: string;
 }
 
-// Railway public TCP proxy — one endpoint relays all feature ports
-// (8881-8886) via SNI/feature sniffing. IP lock is not possible here
-// (Railway's public TCP proxy hides client IPs behind NAT), so access
-// control lives in key syncing: when a key expires or is removed the bot
-// stops syncing it and the proxy relays nothing for it anymore.
+// Railway public TCP proxy — one endpoint relays the whole OBB mod
+// (Head/Body hits). IP lock is not possible here (Railway's public TCP
+// proxy hides client IPs behind NAT), so access control lives in key
+// syncing: when a key expires or is removed the bot stops syncing it
+// and the proxy relays nothing for it anymore.
 export const PROXY_SERVER = {
   tcp: "sakura.proxy.rlwy.net:19201",
   syncUrl: "https://ff-mitm-proxy-production.up.railway.app/sync-key",
@@ -101,14 +97,7 @@ export const PROXY_SERVER = {
 const DEFAULT_PROXY: ProxySettings = {
   ip: "sakura.proxy.rlwy.net",
   port: 19201,
-  ports: {
-    aim_drag: 8881,
-    aim_body: 8882,
-    aim_neck: 8883,
-    speed: 8884,
-    mode_3d: 8885,
-    speed_pro: 8886,
-  },
+  feature: "obb",
 };
 
 const DEFAULT_STAR_PRICES: StarPrice[] = [
@@ -377,7 +366,7 @@ export const dbOps = {
 
   // Sync an active key to the Railway proxy server so the proxy relays
   // game traffic for it. Returns true on success (errors are logged only).
-  async syncKeyToProxy(keyStr: string, feature: string): Promise<boolean> {
+  async syncKeyToProxy(keyStr: string, feature: string = "obb"): Promise<boolean> {
     const key = await dbOps.getKeyByValue(keyStr);
     if (!key || !key.is_active || new Date(key.expires_at) <= new Date()) {
       return false;

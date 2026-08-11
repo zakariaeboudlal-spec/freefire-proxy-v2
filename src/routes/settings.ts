@@ -44,7 +44,7 @@ router.get("/settings/proxy", authMiddleware, (_req, res) => {
 });
 
 router.put("/settings/proxy", authMiddleware, (req, res) => {
-  const { ip, port, ports } = req.body;
+  const { ip, port } = req.body;
   if (typeof ip !== "string" || !ip.trim()) {
     res.status(400).json({ error: "ip is required" });
     return;
@@ -53,14 +53,7 @@ router.put("/settings/proxy", authMiddleware, (req, res) => {
   const updated = {
     ip: ip.trim(),
     port: typeof port === "number" ? port : current.port,
-    ports: {
-      aim_drag:  typeof ports?.aim_drag  === "number" ? ports.aim_drag  : current.ports.aim_drag,
-      aim_body:  typeof ports?.aim_body  === "number" ? ports.aim_body  : current.ports.aim_body,
-      aim_neck:  typeof ports?.aim_neck  === "number" ? ports.aim_neck  : current.ports.aim_neck,
-      speed:     typeof ports?.speed     === "number" ? ports.speed     : current.ports.speed,
-      mode_3d:   typeof ports?.mode_3d   === "number" ? ports.mode_3d   : current.ports.mode_3d,
-      speed_pro: typeof ports?.speed_pro === "number" ? ports.speed_pro : current.ports.speed_pro,
-    },
+    feature: "obb",
   };
   dbOps.setProxySettings(updated);
   res.json(updated);
