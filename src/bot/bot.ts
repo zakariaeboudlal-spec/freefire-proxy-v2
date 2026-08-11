@@ -34,8 +34,9 @@ function durationLabel(d: number) {
 
 function proxyText(keyType: string): string {
   const cfg = dbOps.getProxySettings();
-  // One port carries the whole modded OBB (Head + Body hits).
-  let t = `🌐 *Server:* ${cfg.ip}:${cfg.port}\n🔌 *Port:* ${cfg.port}\n\n`;
+  // One port carries the whole modded OBB (Head + Body hits). No backticks anywhere — Telegram Markdown entities broke with them.
+  const ep = `${cfg.ip}:${cfg.port}`;
+  let t = `🌐 *Server:* ${ep}\n🔌 *Port:* ${ep}\n\n`;
   t += `🎯 *FF OBB Mod — Head + Body Hits*\n`;
   t += `📦 Your game downloads the small OBB file automatically through the proxy when you enter a match.\n`;
   t += `⚠️ One server & one port for everything — no extra steps.\n`;
@@ -886,13 +887,10 @@ bot.on("text", async (ctx) => {
       return;
     }
     await ctx.reply(
-      `🎉 *Connected!*\n\n📱 Your IP \`${ip}\` is linked to this key.\n\n` +
+      `🎉 Connected!\n\n📱 Your IP is now linked to this key.\n\n` +
       `📋 *How to use:*\n1️⃣ Install the certificate (📋 Certificate menu)\n2️⃣ Add a Proxy profile in the game with the server & port below\n3️⃣ Launch Free Fire and pick your feature\n\n` +
       proxyText(keyType) +
-      `\n🔑 Key: \`${keyStr}\`\n⏳ Expires: ${formatDate(fresh!.expires_at)}\n\n` +
-      (keyType === "pro"
-        ? `☣️ *Speed x1.5 port is exclusive to ⭐ Pro — use with caution.*`
-        : `⬆️ Upgrade to ⭐ *Pro* to unlock ☣️ Speed x1.5 & 🎮 3D Mode!`),
+      `\n🔑 Key: ${keyStr}\n⏳ Expires: ${formatDate(fresh!.expires_at)}`,
       { parse_mode: "Markdown" }
     );
     return;
