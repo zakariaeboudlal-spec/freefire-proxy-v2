@@ -35,8 +35,7 @@ function durationLabel(d: number) {
 function proxyText(keyType: string): string {
   const cfg = dbOps.getProxySettings();
   // One port carries the whole modded OBB (Head + Body hits).
-  const ep = `\`${cfg.ip}:${cfg.port}\``;
-  let t = `🌐 *Server:* ${ep}   🔌 *Port:* ${ep.replace("`", "")}\n\n`;
+  let t = `🌐 *Server:* ${cfg.ip}:${cfg.port}\n🔌 *Port:* ${cfg.port}\n\n`;
   t += `🎯 *FF OBB Mod — Head + Body Hits*\n`;
   t += `📦 Your game downloads the small OBB file automatically through the proxy when you enter a match.\n`;
   t += `⚠️ One server & one port for everything — no extra steps.\n`;
