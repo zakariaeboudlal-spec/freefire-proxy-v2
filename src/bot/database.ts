@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import pg from "pg";
+import { logger } from "../lib/logger.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = path.resolve(__dirname, "../data");
@@ -118,17 +120,90 @@ const DEFAULT_STAR_PRICES: StarPrice[] = [
   { type: "pro",   duration_days: 30, stars: 700 },
 ];
 
-interface DataStore {
-  keys: Key[];
-  sellers: Seller[];
-  prices: KeyPrice[];
-  nextKeyId: number;
-  keyFormat: string;
+// ---------------------------------------------------------------------------
+// PostgreSQL-backed key store (Railway Postgres). Keys are kept in a permanent
+// database so they survive every Render redeploy. Non-key entities (sellers,
+// prices, users, bot state) stay as JSON files since they are rarely changed.
+// ---------------------------------------------------------------------------
+
+const PG_URL = process.env.DATABASE_PUBLIC_URL || "";
+const USE_PG = !!PG_URL;
+
+let pgPool: pg.Pool | null = null;
+let pgReady = false;
+
+function getPool(): pg.Pool {
+  if (!pgPool) {
+    pgPool = new pg.Pool({ connectionString: PG_URL, max: 5 });
+    pgPool.on("error", () => {
+      // Connection lost — queries will fall back to JSON file
+      pgReady = false;
+    });
+  }
+  return pgPool;
 }
 
-const DEFAULT_KEY_FORMAT = "XXXXXXXXXXXXXXXX";
+async function ensureSchema(): Promise<void> {
+  if (pgReady || !USE_PG) return;
+  try {
+    const pool = getPool();
+    await pool.query(`CREATE TABLE IF NOT EXISTS ff_keys (
+      key_value TEXT PRIMARY KEY,
+      key_type TEXT NOT NULL DEFAULT 'daily',
+      duration_days INTEGER NOT NULL DEFAULT 1,
+      activated_at TIMESTAMP,
+      expires_at TIMESTAMP NOT NULL DEFAULT NOW() + INTERVAL '1 day',
+      device_ip TEXT,
+      active BOOLEAN NOT NULL DEFAULT FALSE,
+      user_id TEXT,
+      created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+      locked_ip TEXT,
+      reset_count INTEGER NOT NULL DEFAULT 0,
+      last_reset_at TIMESTAMP
+    )`);
+    pgReady = true;
+  } catch {
+    pgReady = false;
+  }
+}
 
-function loadData(): DataStore {
+function keyRowToKey(row: any): Key {
+  return {
+    id: Number(row.key_value.replace(/[^0-9]/g, "").slice(0, 8) || "0"),
+    key: String(row.key_value),
+    type: String(row.key_type ?? "daily"),
+    duration_days: Number(row.duration_days ?? 1),
+    expires_at: row.expires_at ? new Date(row.expires_at).toISOString() : new Date(0).toISOString(),
+    created_by: Number(row.user_id ?? 0),
+    is_active: row.active === true || row.active === "t",
+    created_at: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
+    locked_ip: row.locked_ip ?? null,
+    reset_count: Number(row.reset_count ?? 0),
+    last_reset_at: row.last_reset_at ? new Date(row.last_reset_at).toISOString() : null,
+  };
+}
+
+function rowToKey(keyStr: string, ktype: string, days: number, createdBy: number): Key {
+  return {
+    id: 0,
+    key: keyStr,
+    type: ktype,
+    duration_days: days,
+    expires_at: new Date(Date.now() + days * 86400000).toISOString(),
+    created_by: createdBy,
+    is_active: false,
+    created_at: new Date().toISOString(),
+    locked_ip: null,
+    reset_count: 0,
+    last_reset_at: null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+
+const DEFAULT_KEY_FORMAT = "FF-XXXX-XXXX-XXXX";
+
+function loadData() {
   const keys = loadFile<Key[]>("keys.json", []).map((k) => ({
     locked_ip: null,
     reset_count: 0,
@@ -178,9 +253,24 @@ function getExpiresAt(days: number): string {
 }
 
 export const dbOps = {
-  createKey(type: string, durationDays: number, createdBy: number): Key {
-    const { keys, nextKeyId } = loadData();
+  async createKey(type: string, durationDays: number, createdBy: number): Promise<Key> {
+    await ensureSchema();
     let keyStr = generateKeyStr();
+    if (USE_PG && pgReady) {
+      let exists = await getPool().then((p) =>
+        p.query("SELECT 1 FROM ff_keys WHERE key_value = $1", [keyStr]).then((r) => r.rows.length > 0).catch(() => false)
+      );
+      while (exists) {
+        keyStr = generateKeyStr();
+        exists = await getPool().then((p) =>
+          p.query("SELECT 1 FROM ff_keys WHERE key_value = $1", [keyStr]).then((r) => r.rows.length > 0).catch(() => false)
+        );
+      }
+      const key = rowToKey(keyStr, type, durationDays, createdBy);
+      return key;
+    }
+    // fallback: JSON file
+    const { keys, nextKeyId } = loadData();
     while (keys.find((k) => k.key === keyStr)) keyStr = generateKeyStr();
     const newKey: Key = {
       id: nextKeyId,
@@ -200,7 +290,27 @@ export const dbOps = {
     return newKey;
   },
 
-  createKeys(type: string, durationDays: number, createdBy: number, count: number): Key[] {
+  async createKeys(type: string, durationDays: number, createdBy: number, count: number): Promise<Key[]> {
+    await ensureSchema();
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      const created: Key[] = [];
+      for (let i = 0; i < count; i++) {
+        let keyStr = generateKeyStr();
+        while (await pool.query("SELECT 1 FROM ff_keys WHERE key_value = $1", [keyStr]).then((r) => r.rows.length > 0).catch(() => false)) {
+          keyStr = generateKeyStr();
+        }
+        const key = rowToKey(keyStr, type, durationDays, createdBy);
+        await pool.query(
+          `INSERT INTO ff_keys (key_value, key_type, duration_days, expires_at, active, user_id)
+           VALUES ($1, $2, $3, $4, FALSE, $5)
+           ON CONFLICT (key_value) DO NOTHING`,
+          [keyStr, type, durationDays, new Date(Date.now() + durationDays * 86400000), String(createdBy)]
+        );
+        created.push(key);
+      }
+      return created;
+    }
     const { keys, nextKeyId } = loadData();
     const created: Key[] = [];
     let idCounter = nextKeyId;
@@ -229,12 +339,34 @@ export const dbOps = {
     return created;
   },
 
-  checkKey(keyStr: string): Key | null {
+  async checkKey(keyStr: string): Promise<Key | null> {
+    await ensureSchema();
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      try {
+        const res = await pool.query(
+          `SELECT * FROM ff_keys WHERE key_value = $1 AND active = TRUE AND expires_at > NOW()`,
+          [keyStr]
+        );
+        if (res.rows.length === 0) return null;
+        const key = keyRowToKey(res.rows[0]);
+        key.is_active = true;
+        return key;
+      } catch {
+        // fall through to JSON
+      }
+    }
     const { keys } = loadData();
     return keys.find((k) => k.key === keyStr && k.is_active) ?? null;
   },
 
-  lockKeyToIp(keyStr: string, ip: string): boolean {
+  async lockKeyToIp(keyStr: string, ip: string): Promise<boolean> {
+    await ensureSchema();
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      const res = await pool.query(`UPDATE ff_keys SET device_ip = $1, locked_ip = $1 WHERE key_value = $2`, [ip, keyStr]);
+      return (res.rowCount ?? 0) > 0;
+    }
     const { keys, nextKeyId } = loadData();
     const key = keys.find((k) => k.key === keyStr);
     if (!key) return false;
@@ -246,7 +378,7 @@ export const dbOps = {
   // Sync an active key to the Railway proxy server so the proxy relays
   // game traffic for it. Returns true on success (errors are logged only).
   async syncKeyToProxy(keyStr: string, feature: string): Promise<boolean> {
-    const key = dbOps.getKeyByValue(keyStr);
+    const key = await dbOps.getKeyByValue(keyStr);
     if (!key || !key.is_active || new Date(key.expires_at) <= new Date()) {
       return false;
     }
@@ -259,12 +391,12 @@ export const dbOps = {
         signal: AbortSignal.timeout(8000),
       });
       if (!res.ok) {
-        logger.error({ status: res.status }, "Proxy sync failed");
+        console.error("Proxy sync failed", { status: res.status });
         return false;
       }
       return true;
     } catch (err) {
-      logger.error({ err }, "Proxy sync error");
+      console.error("Proxy sync error", err);
       return false;
     }
   },
@@ -284,7 +416,27 @@ export const dbOps = {
     }
   },
 
-  resetKeyIp(keyStr: string): ResetResult {
+  async resetKeyIp(keyStr: string): Promise<ResetResult> {
+    await ensureSchema();
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      const res = await pool.query(`SELECT reset_count, last_reset_at FROM ff_keys WHERE key_value = $1`, [keyStr]);
+      if (res.rows.length === 0) return { ok: false, reason: "not_found" };
+      const { reset_count, last_reset_at } = res.rows[0];
+      if ((reset_count ?? 0) >= RESET_MAX) return { ok: false, reason: "max_reached" };
+      if (last_reset_at) {
+        const hoursSince = (Date.now() - new Date(last_reset_at).getTime()) / 36e5;
+        if (hoursSince < RESET_COOLDOWN_HOURS) {
+          return { ok: false, reason: "too_soon", retry_after_hours: Math.ceil((RESET_COOLDOWN_HOURS - hoursSince) * 10) / 10 };
+        }
+      }
+      await pool.query(
+        `UPDATE ff_keys SET locked_ip = NULL, device_ip = NULL,
+         reset_count = reset_count + 1, last_reset_at = NOW() WHERE key_value = $1`,
+        [keyStr]
+      );
+      return { ok: true };
+    }
     const { keys, nextKeyId } = loadData();
     const key = keys.find((k) => k.key === keyStr);
     if (!key) return { ok: false, reason: "not_found" };
@@ -308,7 +460,13 @@ export const dbOps = {
     return { ok: true };
   },
 
-  deleteKeyById(id: number): boolean {
+  async deleteKeyById(id: number): Promise<boolean> {
+    await ensureSchema();
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      const res = await pool.query(`DELETE FROM ff_keys WHERE key_value LIKE $1`, [`${id}%`]);
+      return (res.rowCount ?? 0) > 0;
+    }
     const { keys, nextKeyId } = loadData();
     const idx = keys.findIndex((k) => k.id === id);
     if (idx === -1) return false;
@@ -317,7 +475,13 @@ export const dbOps = {
     return true;
   },
 
-  deleteKeyByValue(keyStr: string): boolean {
+  async deleteKeyByValue(keyStr: string): Promise<boolean> {
+    await ensureSchema();
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      const res = await pool.query(`DELETE FROM ff_keys WHERE key_value = $1`, [keyStr]);
+      return (res.rowCount ?? 0) > 0;
+    }
     const { keys, nextKeyId } = loadData();
     const idx = keys.findIndex((k) => k.key === keyStr);
     if (idx === -1) return false;
@@ -326,7 +490,17 @@ export const dbOps = {
     return true;
   },
 
-  getAllKeys(): Key[] {
+  async getAllKeys(): Promise<Key[]> {
+    await ensureSchema();
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      try {
+        const res = await pool.query(`SELECT * FROM ff_keys ORDER BY created_at DESC`);
+        return res.rows.map(keyRowToKey);
+      } catch {
+        // fall through
+      }
+    }
     const { keys } = loadData();
     return [...keys].reverse();
   },
@@ -336,7 +510,18 @@ export const dbOps = {
     return keys.filter((k) => k.created_by === userId).reverse();
   },
 
-  getKeyByValue(keyStr: string): Key | null {
+  async getKeyByValue(keyStr: string): Promise<Key | null> {
+    await ensureSchema();
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      try {
+        const res = await pool.query(`SELECT * FROM ff_keys WHERE key_value = $1`, [keyStr]);
+        if (res.rows.length === 0) return null;
+        return keyRowToKey(res.rows[0]);
+      } catch {
+        // fall through
+      }
+    }
     const { keys } = loadData();
     return keys.find((k) => k.key === keyStr) ?? null;
   },
@@ -504,14 +689,38 @@ export const dbOps = {
     return loadFile<BotUser[]>("users.json", []);
   },
 
-  getStats(): { totalKeys: number; activeKeys: number; expiredKeys: number; sellersCount: number; lockedKeys: number; totalUsers: number } {
-    const { keys } = loadData();
+  async getStats(): Promise<{ totalKeys: number; activeKeys: number; expiredKeys: number; sellersCount: number; lockedKeys: number; totalUsers: number }> {
+    await ensureSchema();
+    let totalKeys = 0;
+    let activeKeys = 0;
+    let expiredKeys = 0;
+    let lockedKeys = 0;
+    if (USE_PG && pgReady) {
+      const pool = getPool();
+      try {
+        const res = await pool.query(`SELECT COUNT(*) AS total,
+          COUNT(*) FILTER (WHERE active = TRUE AND expires_at > NOW()) AS active,
+          COUNT(*) FILTER (WHERE NOT active OR expires_at <= NOW()) AS expired,
+          COUNT(*) FILTER (WHERE locked_ip IS NOT NULL) AS locked
+          FROM ff_keys`);
+        totalKeys = Number(res.rows[0].total);
+        activeKeys = Number(res.rows[0].active);
+        expiredKeys = Number(res.rows[0].expired);
+        lockedKeys = Number(res.rows[0].locked);
+      } catch {
+        // fall through
+      }
+    }
+    if (totalKeys === 0) {
+      const { keys } = loadData();
+      const now = new Date();
+      activeKeys = keys.filter((k) => k.is_active && new Date(k.expires_at) > now).length;
+      expiredKeys = keys.filter((k) => !k.is_active || new Date(k.expires_at) <= now).length;
+      lockedKeys = keys.filter((k) => k.locked_ip !== null).length;
+      totalKeys = keys.length;
+    }
     const sellers = loadFile<Seller[]>("sellers.json", []);
     const users = loadFile<BotUser[]>("users.json", []);
-    const now = new Date();
-    const activeKeys = keys.filter((k) => k.is_active && new Date(k.expires_at) > now).length;
-    const expiredKeys = keys.filter((k) => !k.is_active || new Date(k.expires_at) <= now).length;
-    const lockedKeys = keys.filter((k) => k.locked_ip !== null).length;
-    return { totalKeys: keys.length, activeKeys, expiredKeys, sellersCount: sellers.length, lockedKeys, totalUsers: users.length };
+    return { totalKeys, activeKeys, expiredKeys, sellersCount: sellers.length, lockedKeys, totalUsers: users.length };
   },
 };

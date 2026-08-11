@@ -104,7 +104,7 @@ bot.start(async (ctx) => {
 
   let msg: string;
   if (isOwner(id)) {
-    const s = dbOps.getStats();
+    const s = await dbOps.getStats();
     msg =
       `┌─────────────────────┐\n` +
       `│  👑 *Owner Dashboard* │\n` +
@@ -140,14 +140,14 @@ bot.command("reset", async (ctx) => {
     await ctx.reply("ℹ️ Usage: `/reset KEY`", { parse_mode: "Markdown" }); return;
   }
   const keyStr = parts[1].trim().toUpperCase();
-  const key = dbOps.getKeyByValue(keyStr);
+  const key = await dbOps.getKeyByValue(keyStr);
   if (!key) {
     await ctx.reply(`❌ Key \`${keyStr}\` not found.`, { parse_mode: "Markdown" }); return;
   }
   if (!isOwner(id) && key.created_by !== id) {
     await ctx.reply("❌ You can only reset your own keys."); return;
   }
-  const result = dbOps.resetKeyIp(keyStr);
+  const result = await dbOps.resetKeyIp(keyStr);
   if (!result.ok) {
     if (result.reason === "max_reached") {
       await ctx.reply(
@@ -162,7 +162,7 @@ bot.command("reset", async (ctx) => {
     }
     return;
   }
-  const remaining = 4 - (dbOps.getKeyByValue(keyStr)?.reset_count ?? 4);
+  const remaining = 4 - (await dbOps.getKeyByValue(keyStr)?.reset_count ?? 4);
   await ctx.reply(
     `♻️ *Reset Successful!*\n\n🔑 \`${keyStr}\`\n\n✅ IP unlocked. Key is free to use.\n🔢 Resets left: *${remaining}/4*`,
     { parse_mode: "Markdown" }
@@ -171,7 +171,7 @@ bot.command("reset", async (ctx) => {
 
 // ─── Menu: 📊 Bot Info ────────────────────────────────────────────────────────
 bot.hears(BTN.INFO, async (ctx) => {
-  const stats  = dbOps.getStats();
+  const stats  = await dbOps.getStats();
   const prices = dbOps.getPrices();
   const cfg    = dbOps.getProxySettings();
   let pt = "";
@@ -335,7 +335,7 @@ bot.action(/^bq_(\w+)_(\d+)_(\d+)$/, async (ctx) => {
     await ctx.editMessageText("❌ *Balance error. Try again.*", { parse_mode: "Markdown" });
     return;
   }
-  const keys = dbOps.createKeys(type, days, id, qty);
+  const keys = await dbOps.createKeys(type, days, id, qty);
   const updated = dbOps.getSeller(id);
   const keyLines = keys.map((k, i) => `  ${i + 1}\\. \`${k.key}\``).join("\n");
   await ctx.editMessageText(
@@ -475,7 +475,7 @@ bot.hears(BTN.OWNER, async (ctx) => {
 });
 
 async function sendOwnerPanel(ctx: any) {
-  const s = dbOps.getStats();
+  const s = await dbOps.getStats();
   await ctx.reply(
     `┌───────────────────────┐\n│  👑 *Owner Control Panel*  │\n└───────────────────────┘\n\n` +
     `📊 *Stats:*\n` +
@@ -535,7 +535,7 @@ bot.action(/^oq_(\w+)_(\d+)_(\d+)$/, async (ctx) => {
   const type = ctx.match[1];
   const days = parseInt(ctx.match[2]);
   const qty  = parseInt(ctx.match[3]);
-  const keys = dbOps.createKeys(type, days, OWNER_ID, qty);
+  const keys = await dbOps.createKeys(type, days, OWNER_ID, qty);
   const keyLines = keys.map((k, i) => `  ${i + 1}. \`${k.key}\``).join("\n");
   await ctx.editMessageText(
     `✅ *${qty} Key${qty > 1 ? "s" : ""} Created!*\n\n` +
@@ -586,7 +586,7 @@ bot.action("oc_delete", async (ctx) => {
 bot.action("oc_allkeys", async (ctx) => {
   await ctx.answerCbQuery();
   if (!isOwner(ctx.from.id)) return;
-  const keys = dbOps.getAllKeys();
+  const keys = await dbOps.getAllKeys();
   if (!keys.length) {
     await ctx.editMessageText("📭 No keys yet.", {
       ...Markup.inlineKeyboard([[Markup.button.callback("🔙 Back", "oc_back")]]),
@@ -758,7 +758,7 @@ bot.action("oc_broadcast", async (ctx) => {
 // Owner: Back
 bot.action("oc_back", async (ctx) => {
   await ctx.answerCbQuery(); if (!isOwner(ctx.from.id)) return;
-  const s = dbOps.getStats();
+  const s = await dbOps.getStats();
   await ctx.editMessageText(
     `┌───────────────────────┐\n│  👑 *Owner Control Panel*  │\n└───────────────────────┘\n\n` +
     `📊 *Stats:*\n` +
@@ -789,7 +789,7 @@ bot.on("message", async (ctx, next) => {
   const type = parts[1];
   const days = parseInt(parts[2]);
   const userId = ctx.from.id;
-  const k = dbOps.createKey(type, days, userId);
+  const k = await dbOps.createKey(type, days, userId);
   await ctx.reply(
     `🌟 *شكراً على شرائك! | Thank you!*\n\n` +
     `✅ Your key is ready:\n\n` +
@@ -826,7 +826,7 @@ bot.on("text", async (ctx) => {
   // Check Key flow
   if (state.action === "check_key") {
     states.delete(id);
-    const key = dbOps.checkKey(text.toUpperCase());
+    const key = await dbOps.checkKey(text.toUpperCase());
     if (!key) {
       await ctx.reply(`❌ *Invalid Key*\n\n\`${text}\` not found.`, { parse_mode: "Markdown" }); return;
     }
@@ -843,7 +843,7 @@ bot.on("text", async (ctx) => {
 
   // Use Key: enter key
   if (state.action === "use_key_enter") {
-    const key = dbOps.checkKey(text.toUpperCase());
+    const key = await dbOps.checkKey(text.toUpperCase());
     if (!key) {
       states.delete(id);
       await ctx.reply(`❌ *Invalid Key*\n\n\`${text}\` not found.`, { parse_mode: "Markdown" }); return;
@@ -877,11 +877,11 @@ bot.on("text", async (ctx) => {
     if (!/^(\d{1,3}\.){3}\d{1,3}$/.test(ip)) {
       await ctx.reply("❌ *Invalid IP*\n\nSend a valid IPv4 (e.g. `1.2.3.4`)", { parse_mode: "Markdown" }); return;
     }
-    const fresh = dbOps.getKeyByValue(keyStr);
+    const fresh = await dbOps.getKeyByValue(keyStr);
     if (fresh?.locked_ip) {
       await ctx.reply(`🔒 *Key Just Locked*\n\nAnother device just activated it.`, { parse_mode: "Markdown" }); return;
     }
-    dbOps.lockKeyToIp(keyStr, ip);
+    await dbOps.lockKeyToIp(keyStr, ip);
     // Sync the key to the Railway proxy server so it relays game traffic.
     const synced = await dbOps.syncKeyToProxy(keyStr, "pro");
     if (!synced) {
@@ -926,7 +926,7 @@ bot.on("text", async (ctx) => {
     const type = state.data?.type as string ?? "basic";
     const days = state.data?.days as number ?? 1;
     if (isNaN(qty) || qty < 1) { await ctx.reply("❌ Send a valid quantity (≥ 1)."); return; }
-    const keys = dbOps.createKeys(type, days, OWNER_ID, qty);
+    const keys = await dbOps.createKeys(type, days, OWNER_ID, qty);
     const lines = keys.map((k, i) => `  ${i + 1}. \`${k.key}\``).join("\n");
     await ctx.reply(
       `✅ *${qty} Key${qty > 1 ? "s" : ""} Created!*\n\n📋 ${typeLabel(type)} — ${durationLabel(days)}\n📅 ${formatDate(keys[0].expires_at)}\n\n🔑 Keys:\n${lines}`,

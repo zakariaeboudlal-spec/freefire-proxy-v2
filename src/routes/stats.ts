@@ -10,8 +10,8 @@ const DATA_DIR = path.resolve(__dirname, "../../data");
 
 const router = Router();
 
-router.get("/stats", authMiddleware, (_req, res) => {
-  const stats = dbOps.getStats();
+router.get("/stats", authMiddleware, async (_req, res) => {
+  const stats = await dbOps.getStats();
   const keys = dbOps.getAllKeys();
   const now = new Date();
   const expiredKeys = keys.filter((k) => new Date(k.expires_at) < now).length;
