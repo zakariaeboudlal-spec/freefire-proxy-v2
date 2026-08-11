@@ -42,8 +42,10 @@ export const botManager = {
   },
 
   async autoStart(): Promise<void> {
-    if (dbOps.getBotRunning()) {
-      logger.info("Auto-starting bot (was running before)");
+    // Always auto-start when enabled (Render free tier hibernates and
+    // SIGTERMs the process, so getBotRunning() would be stale false).
+    if (dbOps.getBotEnabled()) {
+      logger.info("Auto-starting bot (enabled)");
       await botManager.start().catch((err: unknown) => {
         logger.error({ err }, "Auto-start failed");
       });
