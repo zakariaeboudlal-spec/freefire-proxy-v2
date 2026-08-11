@@ -12,7 +12,22 @@ export const botManager = {
     const { default: bot } = await import("./bot.js");
     botInstance = bot;
     try {
-      await bot.telegram.deleteWebhook({ drop_pending_updates: true });
+      // Drop stale webhook so no concurrent polling survives between
+      // Render restarts/hibernation. Keep pending updates so in-flight
+      // activation flows are not lost for users.
+      await bot.telegram.deleteWebhook({ drop_pending_updates: false });
+      // Start polling from the latest known update to avoid a 409 conflict
+      // with a stale polling session that is still alive on Telegram's side.
+      let startOffset = 0;
+      try {
+        const recent = await bot.telegram.getUpdates({ limit: 1, timeout: 0 });
+        if (recent.length > 0) {
+          startOffset = recent[recent.length - 1].update_id + 1;
+          logger.info({ startOffset }, "Starting polling from latest update");
+        }
+      } catch {
+        startOffset = 0;
+      }
       bot.launch({
         allowedUpdates: ["message", "callback_query", "pre_checkout_query"],
       }).catch((err: unknown) => {
@@ -20,6 +35,12 @@ export const botManager = {
         _running = false;
         dbOps.setBotRunning(false);
       });
+      // Telegraf always starts polling from offset 0, which races with a
+      // stale Telegram polling session and causes 409. Jump to the latest
+      // known update right after launch so old sessions drain on their own.
+      if (startOffset > 0 && (bot as any).polling) {
+        (bot as any).polling.offset = startOffset;
+      }
       _running = true;
       dbOps.setBotRunning(true);
       logger.info("Telegram bot started via BotManager");
