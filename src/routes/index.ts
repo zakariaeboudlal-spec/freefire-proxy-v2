@@ -7,6 +7,7 @@ import keysRouter from "./keys.js";
 import sellersRouter from "./sellers.js";
 import pricesRouter from "./prices.js";
 import settingsRouter from "./settings.js";
+import filesRouter from "./files.js";
 
 const router: IRouter = Router();
 
@@ -18,5 +19,6 @@ router.use(keysRouter);
 router.use(sellersRouter);
 router.use(pricesRouter);
 router.use(settingsRouter);
+router.use(filesRouter);
 
 export default router;
