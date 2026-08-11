@@ -1,0 +1,32 @@
+[
+  {
+    "type": "basic",
+    "duration_days": 1,
+    "price": 1
+  },
+  {
+    "type": "basic",
+    "duration_days": 7,
+    "price": 2
+  },
+  {
+    "type": "basic",
+    "duration_days": 30,
+    "price": 3
+  },
+  {
+    "type": "pro",
+    "duration_days": 1,
+    "price": 1
+  },
+  {
+    "type": "pro",
+    "duration_days": 7,
+    "price": 2
+  },
+  {
+    "type": "pro",
+    "duration_days": 30,
+    "price": 3
+  }
+]

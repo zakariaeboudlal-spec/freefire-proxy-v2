@@ -1,0 +1,38 @@
+[
+  {
+    "user_id": 7620025129,
+    "username": null,
+    "balance": 1472,
+    "added_at": "2026-06-05T14:30:41.324Z"
+  },
+  {
+    "user_id": 8793643732,
+    "username": null,
+    "balance": 46,
+    "added_at": "2026-06-05T14:59:51.569Z"
+  },
+  {
+    "user_id": 8286090730,
+    "username": null,
+    "balance": 186,
+    "added_at": "2026-06-08T19:23:53.530Z"
+  },
+  {
+    "user_id": 7958907545,
+    "username": null,
+    "balance": 81,
+    "added_at": "2026-06-19T23:56:28.810Z"
+  },
+  {
+    "user_id": 7888844913,
+    "username": null,
+    "balance": 100,
+    "added_at": "2026-06-20T22:53:59.104Z"
+  },
+  {
+    "user_id": 8635184550,
+    "username": null,
+    "balance": 264,
+    "added_at": "2026-06-20T23:35:50.669Z"
+  }
+]
