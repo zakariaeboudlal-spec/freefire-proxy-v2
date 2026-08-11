@@ -118,6 +118,19 @@ globalThis.__dirname = __bannerPath.dirname(globalThis.__filename);
     `,
     },
   });
+
+  // Telegraf 4.x bundles the `abort-controller` polyfill whose AbortSignal
+  // fails `node-fetch` 2.x's `isAbortSignal` check on Node >= 18, producing
+  // "Expected signal to be an instanceof AbortSignal" and killing long
+  // polling. Swap the polyfill usage for the global native AbortController.
+  const entry = path.join(distDir, "index.mjs");
+  let code = await (await import("node:fs/promises")).readFile(entry, "utf8");
+  const needle = 'this.abortController = new abort_controller_1.default()';
+  if (code.includes(needle)) {
+    code = code.replaceAll(needle, "this.abortController = new AbortController()");
+    await (await import("node:fs/promises")).writeFile(entry, code);
+    console.log("[post-build] patched telegraf AbortController polyfill");
+  }
 }
 
 buildAll().catch((err) => {
