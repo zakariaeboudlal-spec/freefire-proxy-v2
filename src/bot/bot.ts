@@ -485,10 +485,69 @@ async function sendOwnerPanel(ctx: any) {
          Markup.button.callback("📋 All Keys",        "oc_allkeys")],
         [Markup.button.callback("💰 Prices",          "oc_prices"),
          Markup.button.callback("📢 Broadcast",       "oc_broadcast")],
-        [Markup.button.callback("❌ Close",           "close")],
+        [Markup.button.callback("🌐 Proxy Server",   "oc_proxy"),
+         Markup.button.callback("❌ Close",           "close")],
       ]),
     }
   );
+}
+
+// Owner: Proxy Server host management
+bot.action("oc_proxy", async (ctx) => {
+  await ctx.answerCbQuery();
+  if (!isOwner(ctx.from.id)) return;
+  const host = loadHostFile();
+  await ctx.editMessageText(
+    `🌐 *Proxy Server*\n\n` +
+    `Current host: ${host ? host : "(not set; keys will not sync)"}\n` +
+    `Port 19201 = proxy (CONNECT), port 19202 = key sync\n\n` +
+    `Send the ngrok address in this form:\n` +
+    `2.tcp.ngrok.io (host only, without port)`,
+    {
+      parse_mode: "Markdown",
+      ...Markup.inlineKeyboard([[Markup.button.callback("🔙 Back", "oc_back")]]),
+    }
+  );
+  states.set(ctx.from.id, { action: "set_host" });
+});
+
+// Owner: set proxy host from user text
+bot.on("message", async (ctx) => {
+  if (!ctx.message || !("text" in ctx.message)) return;
+  const id = ctx.from.id;
+  const state = states.get(id);
+  if (!state) return;
+  const text = ctx.message.text.trim();
+  if (state.action === "set_host" && isOwner(id)) {
+    states.delete(id);
+    const m = text.match(/^([a-z0-9.-]+\.ngrok\.io)$/i);
+    if (!m) {
+      await ctx.reply("❌ Wrong format. Send only the ngrok host, e.g. `2.tcp.ngrok.io`", { parse_mode: "Markdown", ...Markup.forceReply() });
+      return;
+    }
+    const host = m[1];
+    const fs = await import("node:fs");
+    const path = await import("node:path");
+    const { fileURLToPath } = await import("node:url");
+    const dataDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../data");
+    fs.writeFileSync(path.join(dataDir, "proxyHost.json"), JSON.stringify(host), "utf-8");
+    dbOps.setProxySettings({ ip: host, port: 19201, feature: "pro" });
+    await ctx.reply(
+      `✅ *Proxy host updated*\n\n🌐 ${host}\n🔌 Port: 19201\n\nAll active keys will be re-synced automatically.`,
+      { parse_mode: "Markdown" }
+    );
+    return;
+  }
+});
+
+function loadHostFile(): string {
+  try {
+    const fs = require("node:fs") as typeof import("node:fs");
+    const path = require("node:path") as typeof import("node:path");
+    const { fileURLToPath } = require("node:url") as typeof import("node:url");
+    const p = path.join(path.dirname(fileURLToPath(import.meta.url)), "../data/proxyHost.json");
+    return fs.existsSync(p) ? JSON.parse(fs.readFileSync(p, "utf-8")) : "";
+  } catch { return ""; }
 }
 
 // Owner: Create Key

@@ -84,20 +84,19 @@ export interface ProxySettings {
   feature: string;
 }
 
-// Railway public TCP proxy — one endpoint relays the whole OBB mod
-// (Head/Body hits). IP lock is not possible here (Railway's public TCP
-// proxy hides client IPs behind NAT), so access control lives in key
-// syncing: when a key expires or is removed the bot stops syncing it
-// and the proxy relays nothing for it anymore.
+// Google Colab ngrok TCP tunnel — the proxy runs free inside a Colab
+// notebook (no credit card). The tunnel address can change when the owner
+// re-runs the notebook, so the bot keeps re-syncing active keys whenever
+// the proxy is unreachable (lazy resync on every sync call, capped).
 export const PROXY_SERVER = {
-  tcp: "45.179.82.9:19201",
-  syncUrl: "http://45.179.82.9:8080/sync-key",
+  tcp: "COLAB_NGROK_HOST:19201",
+  syncUrl: "http://COLAB_NGROK_HOST:19202/sync-key",
 };
 
 const DEFAULT_PROXY: ProxySettings = {
-  ip: "45.179.82.9",
+  ip: "",
   port: 19201,
-  feature: "obb",
+  feature: "pro",
 };
 
 const DEFAULT_STAR_PRICES: StarPrice[] = [
@@ -367,6 +366,12 @@ export const dbOps = {
   // Sync an active key to the Railway proxy server so the proxy relays
   // game traffic for it. Returns true on success (errors are logged only).
   async syncKeyToProxy(keyStr: string, feature: string = "obb"): Promise<boolean> {
+    const host = loadFile<string>("proxyHost.json", "");
+    if (host) {
+      PROXY_SERVER.tcp = `${host}:19201`;
+      PROXY_SERVER.syncUrl = `http://${host}:19202/sync-key`;
+    }
+
     const key = await dbOps.getKeyByValue(keyStr);
     if (!key || !key.is_active || new Date(key.expires_at) <= new Date()) {
       return false;
