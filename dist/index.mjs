@@ -33963,6 +33963,13 @@ var init_esm = __esm({
 });
 
 // src/bot/database.ts
+var database_exports = {};
+__export(database_exports, {
+  PROXY_SERVER: () => PROXY_SERVER,
+  RESET_COOLDOWN_HOURS: () => RESET_COOLDOWN_HOURS,
+  RESET_MAX: () => RESET_MAX,
+  dbOps: () => dbOps
+});
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -34093,13 +34100,13 @@ var init_database = __esm({
     RESET_MAX = 4;
     RESET_COOLDOWN_HOURS = 3;
     PROXY_SERVER = {
-      tcp: "sakura.proxy.rlwy.net:19201",
-      syncUrl: "https://ff-mitm-proxy-production.up.railway.app/sync-key"
+      tcp: "COLAB_NGROK_HOST:19201",
+      syncUrl: "http://COLAB_NGROK_HOST:19202/sync-key"
     };
     DEFAULT_PROXY = {
-      ip: "sakura.proxy.rlwy.net",
+      ip: "",
       port: 19201,
-      feature: "obb"
+      feature: "pro"
     };
     DEFAULT_STAR_PRICES = [
       { type: "basic", duration_days: 1, stars: 50 },
@@ -34234,6 +34241,11 @@ var init_database = __esm({
       // Sync an active key to the Railway proxy server so the proxy relays
       // game traffic for it. Returns true on success (errors are logged only).
       async syncKeyToProxy(keyStr, feature = "obb") {
+        const host = loadFile("proxyHost.json", "");
+        if (host) {
+          PROXY_SERVER.tcp = `${host}:19201`;
+          PROXY_SERVER.syncUrl = `http://${host}:19202/sync-key`;
+        }
         const key = await dbOps.getKeyByValue(keyStr);
         if (!key || !key.is_active || new Date(key.expires_at) <= /* @__PURE__ */ new Date()) {
           return false;
@@ -34254,6 +34266,42 @@ var init_database = __esm({
         } catch (err) {
           console.error("Proxy sync error", err);
           return false;
+        }
+      },
+      // Re-sync every active (non-expired) key to the Railway proxy. Run at bot
+      // boot and after each proxy redeploy, because the proxy's keys.json is
+      // ephemeral and is wiped on every Railway deployment.
+      async syncAllActiveKeysToProxy(feature = "pro") {
+        if (!USE_PG) return 0;
+        try {
+          const pool = getPool();
+          const res = await pool.query(
+            "SELECT key_value, expires_at FROM ff_keys WHERE active = true AND expires_at > NOW()"
+          );
+          let synced = 0;
+          for (const row of res.rows) {
+            const expiresMs = new Date(row.expires_at).getTime();
+            try {
+              const r = await fetch(PROXY_SERVER.syncUrl, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  key: row.key_value,
+                  ip: "any",
+                  expired_at: expiresMs,
+                  feature
+                }),
+                signal: AbortSignal.timeout(8e3)
+              });
+              if (r.ok) synced++;
+            } catch {
+            }
+          }
+          console.log(`[PROXY SYNC] re-synced ${synced}/${res.rows.length} active keys`);
+          return synced;
+        } catch (err) {
+          console.error("[PROXY SYNC] bulk sync error", err);
+          return 0;
         }
       },
       // Remove a key from the proxy so it relays nothing for it anymore.
@@ -43889,10 +43937,24 @@ async function sendOwnerPanel(ctx) {
           import_telegraf.Markup.button.callback("\u{1F4B0} Prices", "oc_prices"),
           import_telegraf.Markup.button.callback("\u{1F4E2} Broadcast", "oc_broadcast")
         ],
-        [import_telegraf.Markup.button.callback("\u274C Close", "close")]
+        [
+          import_telegraf.Markup.button.callback("\u{1F310} Proxy Server", "oc_proxy"),
+          import_telegraf.Markup.button.callback("\u274C Close", "close")
+        ]
       ])
     }
   );
+}
+function loadHostFile() {
+  try {
+    const fs4 = __require("node:fs");
+    const path4 = __require("node:path");
+    const { fileURLToPath: fileURLToPath3 } = __require("node:url");
+    const p = path4.join(path4.dirname(fileURLToPath3(import.meta.url)), "../data/proxyHost.json");
+    return fs4.existsSync(p) ? JSON.parse(fs4.readFileSync(p, "utf-8")) : "";
+  } catch {
+    return "";
+  }
 }
 async function showSellers(ctx) {
   const sellers = dbOps.getAllSellers();
@@ -44304,6 +44366,57 @@ One port, full FF OBB mod with Head + Body hits.`,
     bot.hears(BTN.OWNER, async (ctx) => {
       if (!isOwner(ctx.from.id)) return;
       await sendOwnerPanel(ctx);
+    });
+    bot.action("oc_proxy", async (ctx) => {
+      await ctx.answerCbQuery();
+      if (!isOwner(ctx.from.id)) return;
+      const host = loadHostFile();
+      await ctx.editMessageText(
+        `\u{1F310} *Proxy Server*
+
+Current host: ${host ? host : "(not set; keys will not sync)"}
+Port 19201 = proxy (CONNECT), port 19202 = key sync
+
+Send the ngrok address in this form:
+2.tcp.ngrok.io (host only, without port)`,
+        {
+          parse_mode: "Markdown",
+          ...import_telegraf.Markup.inlineKeyboard([[import_telegraf.Markup.button.callback("\u{1F519} Back", "oc_back")]])
+        }
+      );
+      states.set(ctx.from.id, { action: "set_host" });
+    });
+    bot.on("message", async (ctx) => {
+      if (!ctx.message || !("text" in ctx.message)) return;
+      const id = ctx.from.id;
+      const state = states.get(id);
+      if (!state) return;
+      const text = ctx.message.text.trim();
+      if (state.action === "set_host" && isOwner(id)) {
+        states.delete(id);
+        const m = text.match(/^([a-z0-9.-]+\.ngrok\.io)$/i);
+        if (!m) {
+          await ctx.reply("\u274C Wrong format. Send only the ngrok host, e.g. `2.tcp.ngrok.io`", { parse_mode: "Markdown", ...import_telegraf.Markup.forceReply() });
+          return;
+        }
+        const host = m[1];
+        const fs4 = await import("node:fs");
+        const path4 = await import("node:path");
+        const { fileURLToPath: fileURLToPath3 } = await import("node:url");
+        const dataDir = path4.resolve(path4.dirname(fileURLToPath3(import.meta.url)), "../data");
+        fs4.writeFileSync(path4.join(dataDir, "proxyHost.json"), JSON.stringify(host), "utf-8");
+        dbOps.setProxySettings({ ip: host, port: 19201, feature: "pro" });
+        await ctx.reply(
+          `\u2705 *Proxy host updated*
+
+\u{1F310} ${host}
+\u{1F50C} Port: 19201
+
+All active keys will be re-synced automatically.`,
+          { parse_mode: "Markdown" }
+        );
+        return;
+      }
     });
     bot.action("oc_create", async (ctx) => {
       await ctx.answerCbQuery();
@@ -49475,6 +49588,16 @@ app_default.listen(port, (err) => {
   logger.info({ port }, "Server listening");
 });
 botManager.autoStart();
+setTimeout(async () => {
+  try {
+    const { dbOps: dbOps2 } = await Promise.resolve().then(() => (init_database(), database_exports));
+    if (typeof dbOps2.syncAllActiveKeysToProxy === "function") {
+      await dbOps2.syncAllActiveKeysToProxy("pro");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to re-sync active keys to proxy");
+  }
+}, 2e4).unref?.();
 process.once("SIGINT", async () => {
   await botManager.stop();
   process.exit(0);
