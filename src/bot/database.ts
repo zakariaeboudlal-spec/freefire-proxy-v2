@@ -90,12 +90,12 @@ export interface ProxySettings {
 // syncing: when a key expires or is removed the bot stops syncing it
 // and the proxy relays nothing for it anymore.
 export const PROXY_SERVER = {
-  tcp: "sakura.proxy.rlwy.net:19201",
-  syncUrl: "https://ff-mitm-proxy-production.up.railway.app/sync-key",
+  tcp: "45.179.82.9:19201",
+  syncUrl: "http://45.179.82.9:8080/sync-key",
 };
 
 const DEFAULT_PROXY: ProxySettings = {
-  ip: "sakura.proxy.rlwy.net",
+  ip: "45.179.82.9",
   port: 19201,
   feature: "obb",
 };
