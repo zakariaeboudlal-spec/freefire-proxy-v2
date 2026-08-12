@@ -390,6 +390,44 @@ export const dbOps = {
     }
   },
 
+  // Re-sync every active (non-expired) key to the Railway proxy. Run at bot
+  // boot and after each proxy redeploy, because the proxy's keys.json is
+  // ephemeral and is wiped on every Railway deployment.
+  async syncAllActiveKeysToProxy(feature: string = "pro"): Promise<number> {
+    if (!USE_PG) return 0;
+    try {
+      const pool = getPool();
+      const res = await pool.query(
+        "SELECT key_value, expires_at FROM ff_keys WHERE active = true AND expires_at > NOW()",
+      );
+      let synced = 0;
+      for (const row of res.rows) {
+        const expiresMs = new Date(row.expires_at).getTime();
+        try {
+          const r = await fetch(PROXY_SERVER.syncUrl, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              key: row.key_value,
+              ip: "any",
+              expired_at: expiresMs,
+              feature,
+            }),
+            signal: AbortSignal.timeout(8000),
+          });
+          if (r.ok) synced++;
+        } catch {
+          /* ignore transient failures */
+        }
+      }
+      console.log(`[PROXY SYNC] re-synced ${synced}/${res.rows.length} active keys`);
+      return synced;
+    } catch (err) {
+      console.error("[PROXY SYNC] bulk sync error", err);
+      return 0;
+    }
+  },
+
   // Remove a key from the proxy so it relays nothing for it anymore.
   async removeKeyFromProxy(keyStr: string): Promise<boolean> {
     try {

@@ -25,6 +25,21 @@ app.listen(port, (err) => {
 // Auto-start bot only if it was running before server restart
 botManager.autoStart();
 
+// The Railway proxy wipes its key list on every redeploy (keys.json is
+// ephemeral). Re-sync every active key from the permanent database after
+// boot so activated customers keep working across proxy redeployments.
+setTimeout(async () => {
+  try {
+    // dynamic import to avoid starting the DB pool before app boot
+    const { dbOps } = await import("./bot/database.js");
+    if (typeof dbOps.syncAllActiveKeysToProxy === "function") {
+      await dbOps.syncAllActiveKeysToProxy("pro");
+    }
+  } catch (err) {
+    logger.error({ err }, "Failed to re-sync active keys to proxy");
+  }
+}, 20000).unref?.();
+
 process.once("SIGINT", async () => {
   await botManager.stop();
   process.exit(0);
